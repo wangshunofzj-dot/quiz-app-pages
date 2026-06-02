@@ -6,6 +6,7 @@ const state = {
   bankById: new Map(),
   searchIndex: [],
   searchResults: [],
+  searchExpandedAnswers: new Set(),
   session: [],
   index: 0,
   answers: new Map(),
@@ -18,6 +19,8 @@ const state = {
 const dom = {
   searchInput: document.getElementById("search-input"),
   searchLimit: document.getElementById("search-limit"),
+  searchScope: document.getElementById("search-scope"),
+  searchTypeFilter: document.getElementById("search-type-filter"),
   searchBtn: document.getElementById("search-btn"),
   clearSearchBtn: document.getElementById("clear-search-btn"),
   searchSummary: document.getElementById("search-summary"),
@@ -82,6 +85,10 @@ function escapeHtml(text) {
     .replaceAll("'", "&#39;");
 }
 
+function escapeRegExp(text) {
+  return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function shuffle(arr) {
   const copy = [...arr];
   for (let i = copy.length - 1; i > 0; i -= 1) {
@@ -98,6 +105,16 @@ function getTypeCounts(list) {
     map.set(k, (map.get(k) || 0) + 1);
   }
   return [...map.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function buildSearchTypeFilter() {
+  const typeRows = getTypeCounts(state.bank);
+  dom.searchTypeFilter.innerHTML = [
+    '<option value="all">全部题型</option>',
+    ...typeRows.map(
+      ([type, count]) => `<option value="${escapeHtml(type)}">${escapeHtml(type)}（${count}）</option>`,
+    ),
+  ].join("");
 }
 
 function toHalfWidth(text) {
@@ -139,6 +156,21 @@ function buildSearchTokens(text) {
   return [...tokenSet].filter((token) => token.length > 0);
 }
 
+function buildHighlightTerms(text) {
+  const raw = toHalfWidth(text).trim();
+  if (!raw) return [];
+
+  const parts = raw
+    .split(/\s+/)
+    .map((item) => item.trim())
+    .filter((item) => item.length >= 2);
+
+  const compact = raw.replace(/\s+/g, "");
+  if (compact.length >= 2) parts.push(compact);
+
+  return [...new Set(parts)].sort((a, b) => b.length - a.length);
+}
+
 function buildSearchBigrams(text) {
   const compact = compactSearchText(text);
   const output = [];
@@ -146,6 +178,23 @@ function buildSearchBigrams(text) {
     output.push(compact.slice(i, i + 2));
   }
   return output;
+}
+
+function highlightText(text, rawQuery) {
+  const source = (text ?? "").toString();
+  const terms = buildHighlightTerms(rawQuery).map(escapeRegExp);
+  if (!source || !terms.length) return escapeHtml(source);
+
+  const regex = new RegExp(`(${terms.join("|")})`, "giu");
+  const parts = source.split(regex);
+  return parts
+    .map((part, index) => {
+      if (index % 2 === 1) {
+        return `<mark class="search-mark">${escapeHtml(part)}</mark>`;
+      }
+      return escapeHtml(part);
+    })
+    .join("");
 }
 
 function weightedSampleWithoutReplacement(items, count, weightFn) {
@@ -240,6 +289,10 @@ function buildTypeFilters() {
         `<label class="type-pill"><input type="checkbox" value="${escapeHtml(type)}" checked /><span>${escapeHtml(type)}（${count}）</span></label>`,
     )
     .join("");
+}
+
+function buildSearchControls() {
+  buildSearchTypeFilter();
 }
 
 function getSelectedTypes() {
@@ -369,6 +422,14 @@ function createSnippet(question) {
   return parts.length > 170 ? `${parts.slice(0, 170)}...` : parts;
 }
 
+function buildAnswerPreview(question, rawQuery) {
+  const std = normalizeAnswer(question.answer || "", question.question_type);
+  const text = `标准答案：${std || "（主观题/未提供）"}${
+    question.analysis ? `\n\n解析/评估标准：${question.analysis}` : ""
+  }`;
+  return highlightText(text, rawQuery);
+}
+
 function renderSearchResults() {
   const results = state.searchResults;
   if (!results.length) {
@@ -380,6 +441,8 @@ function renderSearchResults() {
     .map((row, index) => {
       const q = row.question;
       const matchedText = row.matchedIn.length ? row.matchedIn.join(" / ") : "综合匹配";
+      const expanded = state.searchExpandedAnswers.has(q.question_id);
+      const rawQuery = dom.searchInput.value.trim();
       return `<article class="search-item">
         <div class="search-item-top">
           <div class="search-item-title">${escapeHtml(q.question_id || "")} · ${escapeHtml(q.question_type || "未分类")}</div>
@@ -390,11 +453,14 @@ function renderSearchResults() {
           <span class="chip chip-soft">${escapeHtml(q.level || "未定级")}</span>
           <span class="chip chip-soft">${escapeHtml(matchedText)}</span>
         </div>
-        <pre class="search-item-snippet">${escapeHtml(createSnippet(q))}</pre>
+        <pre class="search-item-snippet">${highlightText(createSnippet(q), rawQuery)}</pre>
         <div class="search-item-actions">
           <button class="btn btn-primary" data-action="open-search-result" data-index="${index}">打开这题</button>
-          <button class="btn btn-ghost" data-action="show-search-answer" data-id="${escapeHtml(q.question_id)}">快速看答案</button>
+          <button class="btn btn-ghost" data-action="toggle-search-answer" data-id="${escapeHtml(q.question_id)}">${
+            expanded ? "收起答案" : "展开答案"
+          }</button>
         </div>
+        ${expanded ? `<div class="search-answer"><p class="search-answer-title">答案与解析</p><pre class="search-answer-body">${buildAnswerPreview(q, rawQuery)}</pre></div>` : ""}
       </article>`;
     })
     .join("");
@@ -405,26 +471,39 @@ function runSearch() {
   if (!rawQuery) {
     dom.searchSummary.textContent = "请输入题号、题干片段、选项内容或解析关键词。";
     state.searchResults = [];
+    state.searchExpandedAnswers.clear();
     renderSearchResults();
     return;
   }
 
   const limit = Math.min(50, Math.max(1, Number(dom.searchLimit.value || "10")));
+  state.searchExpandedAnswers.clear();
   state.searchResults = searchQuestions(rawQuery, limit);
 
   if (!state.searchResults.length) {
-    dom.searchSummary.textContent = `没有找到和“${rawQuery}”足够接近的题目。可以试试更短的关键词。`;
+    dom.searchSummary.textContent = `没有找到和“${rawQuery}”足够接近的题目。可以试试更短的关键词，或切换搜索范围。`;
     renderSearchResults();
     return;
   }
 
-  dom.searchSummary.textContent = `找到 ${state.searchResults.length} 题，按题干、选项、解析和题号综合排序。`;
+  const scopeLabels = {
+    all: "全部内容",
+    stem: "题干",
+    options: "选项",
+    analysis: "解析",
+    answer: "答案",
+  };
+  const typeFilter = dom.searchTypeFilter.value === "all" ? "全部题型" : dom.searchTypeFilter.value;
+  dom.searchSummary.textContent = `找到 ${state.searchResults.length} 题，当前范围：${scopeLabels[dom.searchScope.value] || "全部内容"}，题型：${typeFilter}。`;
   renderSearchResults();
 }
 
 function clearSearchResults() {
   state.searchResults = [];
+  state.searchExpandedAnswers.clear();
   dom.searchInput.value = "";
+  dom.searchScope.value = "all";
+  dom.searchTypeFilter.value = "all";
   dom.searchSummary.textContent = "支持离线搜题，不需要联网。";
   dom.searchResults.innerHTML = '<div class="search-empty">暂无搜索结果，输入题干片段后试试。</div>';
 }
@@ -445,6 +524,7 @@ function buildSearchEntry(q) {
   const stem = compactSearchText(q.stem || "");
   const options = compactSearchText(extractOptions(q).map((opt) => opt.text).join(" "));
   const analysis = compactSearchText(q.analysis || "");
+  const answer = compactSearchText(q.answer || "");
   const meta = compactSearchText(
     [
       q.question_id,
@@ -465,17 +545,28 @@ function buildSearchEntry(q) {
     stem,
     options,
     analysis,
+    answer,
     meta,
-    full: `${stem} ${options} ${analysis} ${meta}`,
+    full: `${stem} ${options} ${analysis} ${answer} ${meta}`,
   };
 }
 
 function scoreSearchEntry(entry, query) {
-  const { compact, raw, tokens, bigrams } = query;
+  const { compact, raw, tokens, bigrams, scope } = query;
   if (!compact) return { score: 0, matchedIn: [] };
 
   let score = 0;
   const matchedIn = [];
+
+  const fieldConfigs = {
+    stem: { label: "题干", exact: 420, exactScale: 5, tokenScale: 16, tokenMax: 64 },
+    options: { label: "选项", exact: 250, exactScale: 3, tokenScale: 11, tokenMax: 42 },
+    analysis: { label: "解析", exact: 170, exactScale: 2, tokenScale: 8, tokenMax: 32 },
+    answer: { label: "答案", exact: 240, exactScale: 4, tokenScale: 14, tokenMax: 56 },
+    meta: { label: "题号/分类", exact: 120, exactScale: 1, tokenScale: 8, tokenMax: 16 },
+  };
+  const activeFields =
+    scope === "all" ? ["stem", "options", "analysis", "answer", "meta"] : [scope, "meta"];
 
   const idText = (entry.question.question_id || "").toLowerCase();
   if (idText === raw.toLowerCase()) {
@@ -483,51 +574,37 @@ function scoreSearchEntry(entry, query) {
     matchedIn.push("题号精确匹配");
   }
 
-  if (entry.stem.includes(compact)) {
-    score += 420 + Math.min(90, compact.length * 5);
-    matchedIn.push("题干");
-  }
-  if (entry.options.includes(compact)) {
-    score += 250 + Math.min(50, compact.length * 3);
-    matchedIn.push("选项");
-  }
-  if (entry.analysis.includes(compact)) {
-    score += 170 + Math.min(40, compact.length * 2);
-    matchedIn.push("解析");
-  }
-  if (entry.meta.includes(compact)) {
-    score += 120;
-    matchedIn.push("题号/分类");
+  for (const fieldName of activeFields) {
+    const config = fieldConfigs[fieldName];
+    const fieldText = entry[fieldName] || "";
+    if (!config || !fieldText) continue;
+
+    if (fieldText.includes(compact)) {
+      score += config.exact + Math.min(90, compact.length * config.exactScale);
+      matchedIn.push(config.label);
+    }
   }
 
   let tokenHitCount = 0;
   for (const token of tokens) {
     if (token.length === 1 && compact.length > 1) continue;
-    if (entry.stem.includes(token)) {
-      score += Math.min(64, token.length * 16);
+    for (const fieldName of activeFields) {
+      const config = fieldConfigs[fieldName];
+      const fieldText = entry[fieldName] || "";
+      if (!config || !fieldText || !fieldText.includes(token)) continue;
+
+      score += Math.min(config.tokenMax, token.length * config.tokenScale);
       tokenHitCount += 1;
-      continue;
-    }
-    if (entry.options.includes(token)) {
-      score += Math.min(42, token.length * 11);
-      tokenHitCount += 1;
-      continue;
-    }
-    if (entry.analysis.includes(token)) {
-      score += Math.min(32, token.length * 8);
-      tokenHitCount += 1;
-      continue;
-    }
-    if (entry.meta.includes(token)) {
-      score += 16;
-      tokenHitCount += 1;
+      matchedIn.push(config.label);
+      break;
     }
   }
 
   if (bigrams.length) {
     let matched = 0;
+    const combined = activeFields.map((fieldName) => entry[fieldName] || "").join(" ");
     for (const gram of bigrams) {
-      if (entry.full.includes(gram)) matched += 1;
+      if (combined.includes(gram)) matched += 1;
     }
     const coverage = matched / bigrams.length;
     score += Math.round(coverage * 120);
@@ -543,15 +620,19 @@ function scoreSearchEntry(entry, query) {
 function searchQuestions(rawQuery, limit) {
   const compact = compactSearchText(rawQuery);
   if (!compact) return [];
+  const scope = dom.searchScope.value || "all";
+  const typeFilter = dom.searchTypeFilter.value || "all";
 
   const query = {
     raw: rawQuery.trim(),
     compact,
     tokens: buildSearchTokens(rawQuery),
     bigrams: buildSearchBigrams(rawQuery),
+    scope,
   };
 
   return state.searchIndex
+    .filter((entry) => typeFilter === "all" || entry.question.question_type === typeFilter)
     .map((entry) => {
       const { score, matchedIn } = scoreSearchEntry(entry, query);
       return { question: entry.question, score, matchedIn };
@@ -924,16 +1005,23 @@ function bindEvents() {
       return;
     }
 
-    if (action === "show-search-answer") {
+    if (action === "toggle-search-answer") {
       const id = target.dataset.id || "";
-      const question = state.bankById.get(id);
-      if (!question) return;
-      const std = normalizeAnswer(question.answer || "", question.question_type);
-      const answerText = `标准答案：${std || "（主观题/未提供）"}${
-        question.analysis ? `\n\n解析/评估标准：${question.analysis}` : ""
-      }`;
-      alert(answerText);
+      if (!id) return;
+      if (state.searchExpandedAnswers.has(id)) {
+        state.searchExpandedAnswers.delete(id);
+      } else {
+        state.searchExpandedAnswers.add(id);
+      }
+      renderSearchResults();
     }
+  });
+
+  dom.searchScope.addEventListener("change", () => {
+    if (dom.searchInput.value.trim()) runSearch();
+  });
+  dom.searchTypeFilter.addEventListener("change", () => {
+    if (dom.searchInput.value.trim()) runSearch();
   });
 
   document.addEventListener("keydown", (event) => {
@@ -958,6 +1046,7 @@ function init() {
   if (!loadBank()) return;
   loadPersisted();
   buildTypeFilters();
+  buildSearchControls();
   bindEvents();
   clearSearchResults();
   renderWrongBook();

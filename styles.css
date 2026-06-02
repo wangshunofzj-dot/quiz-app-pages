@@ -95,7 +95,7 @@ body {
 .search-grid {
   margin-top: 12px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 160px;
+  grid-template-columns: minmax(0, 1.3fr) 120px 150px 150px;
   gap: 12px;
 }
 
@@ -168,11 +168,42 @@ body {
   font-size: 14px;
 }
 
+.search-mark {
+  background: linear-gradient(180deg, #fff0a8, #ffd875);
+  color: #5e3b00;
+  border-radius: 4px;
+  padding: 0 2px;
+  box-decoration-break: clone;
+}
+
 .search-item-actions {
   margin-top: 10px;
   display: flex;
   flex-wrap: wrap;
   gap: 8px;
+}
+
+.search-answer {
+  margin-top: 10px;
+  border: 1px solid #e4dfc9;
+  border-radius: 12px;
+  padding: 10px;
+  background: #fffdf5;
+}
+
+.search-answer-title {
+  margin: 0 0 6px;
+  font-size: 13px;
+  font-weight: 700;
+  color: #9a6403;
+}
+
+.search-answer-body {
+  margin: 0;
+  white-space: pre-wrap;
+  color: #38475a;
+  line-height: 1.55;
+  font-size: 14px;
 }
 
 .setup-panel h2 {
