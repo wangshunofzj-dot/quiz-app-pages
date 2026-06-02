@@ -4,6 +4,8 @@ const LS_KEY = "quiz_trainer_state_v1";
 const state = {
   bank: [],
   bankById: new Map(),
+  searchIndex: [],
+  searchResults: [],
   session: [],
   index: 0,
   answers: new Map(),
@@ -14,6 +16,12 @@ const state = {
 };
 
 const dom = {
+  searchInput: document.getElementById("search-input"),
+  searchLimit: document.getElementById("search-limit"),
+  searchBtn: document.getElementById("search-btn"),
+  clearSearchBtn: document.getElementById("clear-search-btn"),
+  searchSummary: document.getElementById("search-summary"),
+  searchResults: document.getElementById("search-results"),
   typeFilters: document.getElementById("type-filters"),
   questionCount: document.getElementById("question-count"),
   orderMode: document.getElementById("order-mode"),
@@ -90,6 +98,54 @@ function getTypeCounts(list) {
     map.set(k, (map.get(k) || 0) + 1);
   }
   return [...map.entries()].sort((a, b) => b[1] - a[1]);
+}
+
+function toHalfWidth(text) {
+  return (text ?? "")
+    .toString()
+    .replace(/\u3000/g, " ")
+    .replace(/[！-～]/g, (char) => String.fromCharCode(char.charCodeAt(0) - 65248));
+}
+
+function normalizeSearchText(text) {
+  return toHalfWidth(text)
+    .toLowerCase()
+    .replace(/[^\p{L}\p{N}\s]/gu, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function compactSearchText(text) {
+  return normalizeSearchText(text).replace(/\s+/g, "");
+}
+
+function buildSearchTokens(text) {
+  const normalized = normalizeSearchText(text);
+  const compact = normalized.replace(/\s+/g, "");
+  const tokenSet = new Set(normalized.split(" ").filter(Boolean));
+
+  if (compact) tokenSet.add(compact);
+  if (compact.length >= 2) {
+    for (let i = 0; i < compact.length - 1; i += 1) {
+      tokenSet.add(compact.slice(i, i + 2));
+    }
+  }
+  if (compact.length >= 5 && compact.length <= 18) {
+    for (let i = 0; i < compact.length - 2; i += 1) {
+      tokenSet.add(compact.slice(i, i + 3));
+    }
+  }
+
+  return [...tokenSet].filter((token) => token.length > 0);
+}
+
+function buildSearchBigrams(text) {
+  const compact = compactSearchText(text);
+  const output = [];
+  for (let i = 0; i < compact.length - 1; i += 1) {
+    output.push(compact.slice(i, i + 2));
+  }
+  return output;
 }
 
 function weightedSampleWithoutReplacement(items, count, weightFn) {
@@ -172,6 +228,7 @@ function loadBank() {
 
   state.bank = rows;
   state.bankById = new Map(rows.map((q) => [q.question_id, q]));
+  state.searchIndex = rows.map(buildSearchEntry);
   return true;
 }
 
@@ -281,6 +338,97 @@ function startSession(forceWrongOnly = false) {
   renderQuestion();
 }
 
+function openQuestionSession(questions, targetQuestionId) {
+  if (!questions.length) return;
+
+  state.session = [...questions];
+  resetSessionState();
+  dom.panel.classList.remove("hidden");
+  dom.jumpInput.max = String(state.session.length);
+
+  const targetIndex = Math.max(
+    0,
+    state.session.findIndex((q) => q.question_id === targetQuestionId),
+  );
+  state.index = targetIndex >= 0 ? targetIndex : 0;
+  dom.jumpInput.value = String(state.index + 1);
+  renderQuestion();
+}
+
+function createSnippet(question) {
+  const parts = [
+    question.stem || "",
+    extractOptions(question)
+      .slice(0, 2)
+      .map((opt) => `${opt.letter}. ${opt.text}`)
+      .join(" "),
+  ]
+    .filter(Boolean)
+    .join("\n");
+
+  return parts.length > 170 ? `${parts.slice(0, 170)}...` : parts;
+}
+
+function renderSearchResults() {
+  const results = state.searchResults;
+  if (!results.length) {
+    dom.searchResults.innerHTML = '<div class="search-empty">暂无搜索结果，输入题干片段后试试。</div>';
+    return;
+  }
+
+  dom.searchResults.innerHTML = results
+    .map((row, index) => {
+      const q = row.question;
+      const matchedText = row.matchedIn.length ? row.matchedIn.join(" / ") : "综合匹配";
+      return `<article class="search-item">
+        <div class="search-item-top">
+          <div class="search-item-title">${escapeHtml(q.question_id || "")} · ${escapeHtml(q.question_type || "未分类")}</div>
+          <div class="search-score">匹配度 ${row.score}</div>
+        </div>
+        <div class="search-item-meta">
+          <span class="chip">${escapeHtml(q.category || "未分组")}</span>
+          <span class="chip chip-soft">${escapeHtml(q.level || "未定级")}</span>
+          <span class="chip chip-soft">${escapeHtml(matchedText)}</span>
+        </div>
+        <pre class="search-item-snippet">${escapeHtml(createSnippet(q))}</pre>
+        <div class="search-item-actions">
+          <button class="btn btn-primary" data-action="open-search-result" data-index="${index}">打开这题</button>
+          <button class="btn btn-ghost" data-action="show-search-answer" data-id="${escapeHtml(q.question_id)}">快速看答案</button>
+        </div>
+      </article>`;
+    })
+    .join("");
+}
+
+function runSearch() {
+  const rawQuery = dom.searchInput.value.trim();
+  if (!rawQuery) {
+    dom.searchSummary.textContent = "请输入题号、题干片段、选项内容或解析关键词。";
+    state.searchResults = [];
+    renderSearchResults();
+    return;
+  }
+
+  const limit = Math.min(50, Math.max(1, Number(dom.searchLimit.value || "10")));
+  state.searchResults = searchQuestions(rawQuery, limit);
+
+  if (!state.searchResults.length) {
+    dom.searchSummary.textContent = `没有找到和“${rawQuery}”足够接近的题目。可以试试更短的关键词。`;
+    renderSearchResults();
+    return;
+  }
+
+  dom.searchSummary.textContent = `找到 ${state.searchResults.length} 题，按题干、选项、解析和题号综合排序。`;
+  renderSearchResults();
+}
+
+function clearSearchResults() {
+  state.searchResults = [];
+  dom.searchInput.value = "";
+  dom.searchSummary.textContent = "支持离线搜题，不需要联网。";
+  dom.searchResults.innerHTML = '<div class="search-empty">暂无搜索结果，输入题干片段后试试。</div>';
+}
+
 function extractOptions(q) {
   const letters = "ABCDEFGHIJKLMNOPQRSTUVWXYZ".split("");
   const rows = [];
@@ -291,6 +439,126 @@ function extractOptions(q) {
     if (value) rows.push({ letter, text: value });
   }
   return rows;
+}
+
+function buildSearchEntry(q) {
+  const stem = compactSearchText(q.stem || "");
+  const options = compactSearchText(extractOptions(q).map((opt) => opt.text).join(" "));
+  const analysis = compactSearchText(q.analysis || "");
+  const meta = compactSearchText(
+    [
+      q.question_id,
+      q.question_type,
+      q.category,
+      q.level,
+      q.tags,
+      q.answer,
+      q.source_file,
+      q.source_sheet,
+    ]
+      .filter(Boolean)
+      .join(" "),
+  );
+
+  return {
+    question: q,
+    stem,
+    options,
+    analysis,
+    meta,
+    full: `${stem} ${options} ${analysis} ${meta}`,
+  };
+}
+
+function scoreSearchEntry(entry, query) {
+  const { compact, raw, tokens, bigrams } = query;
+  if (!compact) return { score: 0, matchedIn: [] };
+
+  let score = 0;
+  const matchedIn = [];
+
+  const idText = (entry.question.question_id || "").toLowerCase();
+  if (idText === raw.toLowerCase()) {
+    score += 1000;
+    matchedIn.push("题号精确匹配");
+  }
+
+  if (entry.stem.includes(compact)) {
+    score += 420 + Math.min(90, compact.length * 5);
+    matchedIn.push("题干");
+  }
+  if (entry.options.includes(compact)) {
+    score += 250 + Math.min(50, compact.length * 3);
+    matchedIn.push("选项");
+  }
+  if (entry.analysis.includes(compact)) {
+    score += 170 + Math.min(40, compact.length * 2);
+    matchedIn.push("解析");
+  }
+  if (entry.meta.includes(compact)) {
+    score += 120;
+    matchedIn.push("题号/分类");
+  }
+
+  let tokenHitCount = 0;
+  for (const token of tokens) {
+    if (token.length === 1 && compact.length > 1) continue;
+    if (entry.stem.includes(token)) {
+      score += Math.min(64, token.length * 16);
+      tokenHitCount += 1;
+      continue;
+    }
+    if (entry.options.includes(token)) {
+      score += Math.min(42, token.length * 11);
+      tokenHitCount += 1;
+      continue;
+    }
+    if (entry.analysis.includes(token)) {
+      score += Math.min(32, token.length * 8);
+      tokenHitCount += 1;
+      continue;
+    }
+    if (entry.meta.includes(token)) {
+      score += 16;
+      tokenHitCount += 1;
+    }
+  }
+
+  if (bigrams.length) {
+    let matched = 0;
+    for (const gram of bigrams) {
+      if (entry.full.includes(gram)) matched += 1;
+    }
+    const coverage = matched / bigrams.length;
+    score += Math.round(coverage * 120);
+  }
+
+  if (compact.length >= 4 && tokenHitCount === 0 && score < 130) {
+    return { score: 0, matchedIn: [] };
+  }
+
+  return { score, matchedIn: [...new Set(matchedIn)] };
+}
+
+function searchQuestions(rawQuery, limit) {
+  const compact = compactSearchText(rawQuery);
+  if (!compact) return [];
+
+  const query = {
+    raw: rawQuery.trim(),
+    compact,
+    tokens: buildSearchTokens(rawQuery),
+    bigrams: buildSearchBigrams(rawQuery),
+  };
+
+  return state.searchIndex
+    .map((entry) => {
+      const { score, matchedIn } = scoreSearchEntry(entry, query);
+      return { question: entry.question, score, matchedIn };
+    })
+    .filter((row) => row.score > 0)
+    .sort((a, b) => b.score - a.score || a.question.question_id.localeCompare(b.question.question_id))
+    .slice(0, limit);
 }
 
 function renderOptions(q, savedAnswer) {
@@ -606,6 +874,8 @@ function resetCurrentSession() {
 }
 
 function bindEvents() {
+  dom.searchBtn.addEventListener("click", runSearch);
+  dom.clearSearchBtn.addEventListener("click", clearSearchResults);
   dom.startBtn.addEventListener("click", () => startSession(false));
   dom.startWrongBtn.addEventListener("click", () => startSession(true));
   dom.resetBtn.addEventListener("click", resetCurrentSession);
@@ -639,10 +909,48 @@ function bindEvents() {
     }
   });
 
+  dom.searchResults.addEventListener("click", (event) => {
+    const target = event.target;
+    if (!(target instanceof HTMLElement)) return;
+
+    const action = target.dataset.action;
+    if (!action) return;
+
+    if (action === "open-search-result") {
+      const index = Number(target.dataset.index || "-1");
+      if (!Number.isInteger(index) || index < 0 || index >= state.searchResults.length) return;
+      const questions = state.searchResults.map((row) => row.question);
+      openQuestionSession(questions, questions[index]?.question_id || "");
+      return;
+    }
+
+    if (action === "show-search-answer") {
+      const id = target.dataset.id || "";
+      const question = state.bankById.get(id);
+      if (!question) return;
+      const std = normalizeAnswer(question.answer || "", question.question_type);
+      const answerText = `标准答案：${std || "（主观题/未提供）"}${
+        question.analysis ? `\n\n解析/评估标准：${question.analysis}` : ""
+      }`;
+      alert(answerText);
+    }
+  });
+
   document.addEventListener("keydown", (event) => {
+    const target = event.target;
+    if (target instanceof HTMLElement && ["INPUT", "TEXTAREA", "SELECT"].includes(target.tagName)) {
+      return;
+    }
     if (!state.session.length) return;
     if (event.key === "ArrowRight") gotoQuestion(state.index + 1);
     if (event.key === "ArrowLeft") gotoQuestion(state.index - 1);
+  });
+
+  dom.searchInput.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") {
+      event.preventDefault();
+      runSearch();
+    }
   });
 }
 
@@ -651,6 +959,7 @@ function init() {
   loadPersisted();
   buildTypeFilters();
   bindEvents();
+  clearSearchResults();
   renderWrongBook();
   updateStats();
 }

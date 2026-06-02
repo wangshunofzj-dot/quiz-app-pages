@@ -17,6 +17,33 @@
         <p>手机浏览器可用，支持错题集与错题高频强化。</p>
       </header>
 
+      <section class="panel search-panel">
+        <div class="search-head">
+          <h2>搜题模型</h2>
+          <p>输入题干片段、选项关键词、题号或解析内容，支持近似匹配。</p>
+        </div>
+        <div class="search-grid">
+          <div class="field search-field">
+            <label for="search-input">搜题内容</label>
+            <input
+              id="search-input"
+              type="text"
+              placeholder="例如：FTTH是指、PON技术、ONU注册异常、Q0321"
+            />
+          </div>
+          <div class="field">
+            <label for="search-limit">结果数量</label>
+            <input id="search-limit" type="number" min="1" max="50" value="10" />
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button id="search-btn" class="btn btn-primary">开始搜题</button>
+          <button id="clear-search-btn" class="btn btn-ghost">清空结果</button>
+        </div>
+        <p id="search-summary" class="search-summary">支持离线搜题，不需要联网。</p>
+        <div id="search-results" class="search-results"></div>
+      </section>
+
       <section class="panel setup-panel">
         <h2>开始练习</h2>
         <div class="setup-grid">
