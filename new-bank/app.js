@@ -239,7 +239,13 @@ function safeParseJSON(text, fallback) {
 }
 
 function loadPersisted() {
-  const raw = localStorage.getItem(LS_KEY);
+  let raw = "";
+  try {
+    raw = localStorage.getItem(LS_KEY);
+  } catch (error) {
+    console.warn("无法读取本地练习记录，本次将以临时记录运行。", error);
+    return;
+  }
   if (!raw) return;
 
   const parsed = safeParseJSON(raw, null);
@@ -273,7 +279,11 @@ function savePersisted() {
   const performance = Object.fromEntries(state.performance.entries());
   const seenIds = [...state.seenSet].filter((id) => state.bankById.has(id));
   const payload = { wrongBook, performance, seenIds, savedAt: new Date().toISOString() };
-  localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  try {
+    localStorage.setItem(LS_KEY, JSON.stringify(payload));
+  } catch (error) {
+    console.warn("无法保存本地练习记录，不影响本次练习。", error);
+  }
 }
 
 function formatTime(iso) {
@@ -311,7 +321,12 @@ function buildSearchControls() {
 }
 
 function getSelectedTypes() {
-  return [...dom.typeFilters.querySelectorAll("input[type=checkbox]:checked")].map((el) => el.value);
+  const inputs = [...dom.typeFilters.querySelectorAll("input[type=checkbox]")];
+  if (!inputs.length) {
+    return getTypeCounts(state.bank).map(([type]) => type);
+  }
+
+  return inputs.filter((el) => el.checked).map((el) => el.value);
 }
 
 function getCurrentQuestion() {
@@ -396,6 +411,14 @@ function resetSessionState() {
   dom.resultBox.textContent = "";
 }
 
+function revealQuestionPanel() {
+  if (typeof dom.panel.scrollIntoView !== "function") return;
+
+  window.requestAnimationFrame(() => {
+    dom.panel.scrollIntoView({ behavior: "smooth", block: "start" });
+  });
+}
+
 function startSession(forceWrongOnly = false) {
   const selectedTypes = getSelectedTypes();
   if (selectedTypes.length === 0) {
@@ -421,6 +444,7 @@ function startSession(forceWrongOnly = false) {
   dom.jumpInput.max = String(state.session.length);
   dom.jumpInput.value = "1";
   renderQuestion();
+  revealQuestionPanel();
 }
 
 function openQuestionSession(questions, targetQuestionId) {
@@ -438,6 +462,7 @@ function openQuestionSession(questions, targetQuestionId) {
   state.index = targetIndex >= 0 ? targetIndex : 0;
   dom.jumpInput.value = String(state.index + 1);
   renderQuestion();
+  revealQuestionPanel();
 }
 
 function createSnippet(question) {
