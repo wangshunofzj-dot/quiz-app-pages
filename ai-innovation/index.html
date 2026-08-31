@@ -1,0 +1,195 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>AI 创新应用师题库</title>
+    <link rel="stylesheet" href="./styles.css" />
+    <script>
+      window.QUIZ_APP_STORAGE_KEY = "quiz_trainer_ai_innovation_state_v1";
+    </script>
+    <script defer src="./data/questions.js"></script>
+    <script defer src="./app.js"></script>
+  </head>
+  <body>
+    <div class="shape shape-a" aria-hidden="true"></div>
+    <div class="shape shape-b" aria-hidden="true"></div>
+    <main class="app-shell">
+      <header class="hero">
+        <h1>AI 创新应用师题库</h1>
+        <p>共 280 题：单选 164 题、多选 62 题、判断 54 题。错题连续答对两次自动移出错题集。</p>
+        <p>答案以原始参考题库为准，原表未提供解析。练习记录保存在当前浏览器，与其他题库互不影响。</p>
+      </header>
+
+      <section class="panel search-panel">
+        <div class="search-head">
+          <h2>搜题模型</h2>
+          <p>输入题干片段、选项关键词、题号或解析内容，支持近似匹配。</p>
+        </div>
+        <div class="search-grid">
+          <div class="field search-field">
+            <label for="search-input">搜题内容</label>
+            <input
+              id="search-input"
+              type="text"
+              placeholder="例如：人工智能、智能体、监督学习、Q0001"
+            />
+          </div>
+          <div class="field">
+            <label for="search-limit">结果数量</label>
+            <input id="search-limit" type="number" min="1" max="50" value="10" />
+          </div>
+          <div class="field">
+            <label for="search-scope">搜索范围</label>
+            <select id="search-scope">
+              <option value="all">全部内容</option>
+              <option value="stem">仅题干</option>
+              <option value="options">仅选项</option>
+              <option value="analysis">仅解析</option>
+              <option value="answer">仅答案</option>
+            </select>
+          </div>
+          <div class="field">
+            <label for="search-type-filter">题型限制</label>
+            <select id="search-type-filter">
+              <option value="all">全部题型</option>
+            </select>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button id="search-btn" class="btn btn-primary">开始搜题</button>
+          <button id="clear-search-btn" class="btn btn-ghost">清空结果</button>
+        </div>
+        <p id="search-summary" class="search-summary">支持离线搜题，不需要联网。</p>
+        <div id="search-results" class="search-results"></div>
+      </section>
+
+      <section class="panel setup-panel">
+        <h2>开始练习</h2>
+        <div class="setup-grid">
+          <div class="field">
+            <label for="question-count">抽题数量</label>
+            <input id="question-count" type="number" min="1" value="50" />
+          </div>
+
+          <div class="field">
+            <label for="order-mode">出题顺序</label>
+            <select id="order-mode">
+              <option value="random">随机抽题</option>
+              <option value="sequence">按原顺序</option>
+            </select>
+          </div>
+
+          <div class="field">
+            <label for="practice-mode">训练模式</label>
+            <select id="practice-mode">
+              <option value="smart">智能强化（错题更高概率）</option>
+              <option value="normal">均匀随机</option>
+              <option value="wrong-only">仅错题集</option>
+            </select>
+          </div>
+
+          <div class="field type-field">
+            <span>题型筛选</span>
+            <div id="type-filters" class="type-filters"></div>
+          </div>
+        </div>
+        <div class="setup-actions">
+          <button id="start-btn" class="btn btn-primary">开始练习</button>
+          <button id="start-wrong-btn" class="btn btn-warm">错题专项开始</button>
+          <button id="reset-btn" class="btn btn-ghost">重置记录</button>
+        </div>
+      </section>
+
+      <section class="panel stats-panel">
+        <div class="stat">
+          <span class="label">当前题号</span>
+          <strong id="stat-progress">0 / 0</strong>
+        </div>
+        <div class="stat">
+          <span class="label">客观题正确率</span>
+          <strong id="stat-accuracy">0%</strong>
+        </div>
+        <div class="stat">
+          <span class="label">已做题数</span>
+          <strong id="stat-done">0</strong>
+        </div>
+        <div class="stat">
+          <span class="label">错题数</span>
+          <strong id="stat-wrong">0</strong>
+        </div>
+        <div class="stat">
+          <span class="label">错题库总量</span>
+          <strong id="stat-wrong-bank">0</strong>
+        </div>
+        <div class="stat">
+          <span class="label">累计已刷</span>
+          <strong id="stat-seen">0</strong>
+        </div>
+        <div class="stat">
+          <span class="label">未刷题目</span>
+          <strong id="stat-unseen">0</strong>
+        </div>
+      </section>
+
+      <section id="question-panel" class="panel question-panel hidden">
+        <div class="question-top">
+          <div class="meta-group">
+            <span id="meta-type" class="chip"></span>
+            <span id="meta-category" class="chip chip-soft"></span>
+            <span id="meta-level" class="chip chip-soft"></span>
+          </div>
+          <div class="jump-group">
+            <label for="jump-input">跳题</label>
+            <input id="jump-input" type="number" min="1" value="1" />
+            <button id="jump-btn" class="btn btn-mini">跳转</button>
+          </div>
+        </div>
+
+        <h3 id="question-title"></h3>
+        <pre id="question-stem" class="question-stem"></pre>
+
+        <div id="options-wrap" class="options-wrap"></div>
+
+        <div id="subjective-wrap" class="subjective-wrap hidden">
+          <label for="subjective-note">你的答题思路（可选记录）</label>
+          <textarea
+            id="subjective-note"
+            rows="5"
+            placeholder="可以写你的关键步骤、沟通话术、判断依据..."
+          ></textarea>
+        </div>
+
+        <div class="actions">
+          <button id="check-btn" class="btn btn-primary">提交并判定</button>
+          <button id="show-answer-btn" class="btn btn-ghost">查看答案/解析</button>
+          <button id="prev-btn" class="btn btn-ghost">上一题</button>
+          <button id="next-btn" class="btn btn-primary">下一题</button>
+        </div>
+
+        <div id="result-box" class="result-box hidden"></div>
+      </section>
+
+      <section class="panel coverage-panel">
+        <div class="coverage-head">
+          <h2>未刷到题目</h2>
+          <p id="unseen-summary">还没有开始统计。</p>
+        </div>
+        <div id="unseen-breakdown" class="coverage-breakdown"></div>
+        <div id="unseen-list" class="unseen-list"></div>
+      </section>
+
+      <section class="panel wrongbook-panel">
+        <div class="wrongbook-head">
+          <h2>错题集</h2>
+          <p id="wrongbook-summary">暂无错题。</p>
+        </div>
+        <div class="wrongbook-actions">
+          <button id="export-wrong-btn" class="btn btn-ghost">导出错题JSON</button>
+          <button id="clear-wrong-btn" class="btn btn-danger">清空错题集</button>
+        </div>
+        <div id="wrongbook-list" class="wrongbook-list"></div>
+      </section>
+    </main>
+  </body>
+</html>
